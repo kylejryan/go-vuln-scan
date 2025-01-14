@@ -5,8 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/kylejryan/go-vuln-scan/internal/config"
@@ -53,11 +54,11 @@ Identify potential security vulnerabilities or risky patterns in this code, and 
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
-		bodyBytes, _ := ioutil.ReadAll(resp.Body)
-		return "", fmt.Errorf("Hugging Face API error. Status: %d, Body: %s", resp.StatusCode, string(bodyBytes))
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("hugging Face API error. Status: %d, Body: %s", resp.StatusCode, string(bodyBytes))
 	}
 
-	bodyBytes, err := ioutil.ReadAll(resp.Body)
+	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return "", err
 	}
@@ -81,7 +82,7 @@ Identify potential security vulnerabilities or risky patterns in this code, and 
 }
 
 func Analyze(filePath string) (string, error) {
-	content, err := ioutil.ReadFile(filePath)
+	content, err := os.ReadFile(filePath)
 	if err != nil {
 		return "", err
 	}
