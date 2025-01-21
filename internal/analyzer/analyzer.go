@@ -3,49 +3,84 @@ package analyzer
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"strings"
 
 	"github.com/kylejryan/go-vuln-scan/internal/config"
-	"github.com/kylejryan/go-vuln-scan/pkg/models"
 )
 
-type HFRequest struct {
-	Inputs string `json:"inputs"`
+// ChatMessage represents a single message in a chat.
+type ChatMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
 }
 
-func AnalyzeCodeWithHF(code string) (string, error) {
+// ChatCompletionRequest is the payload we send to the Hugging Face endpoint.
+type ChatCompletionRequest struct {
+	Model     string        `json:"model"`
+	Messages  []ChatMessage `json:"messages"`
+	MaxTokens int           `json:"max_tokens"`
+	Stream    bool          `json:"stream"`
+}
+
+// Choice and ChatCompletionResponse help parse the returned JSON structure.
+type Choice struct {
+	Index   int `json:"index"`
+	Message struct {
+		Role    string `json:"role"`
+		Content string `json:"content"`
+	} `json:"message"`
+	FinishReason string `json:"finish_reason"`
+}
+
+type ChatCompletionResponse struct {
+	ID      string   `json:"id"`
+	Object  string   `json:"object"`
+	Created int64    `json:"created"`
+	Choices []Choice `json:"choices"`
+}
+
+// Example function that asks "What is the capital of France?"
+func Analyze(code string) (string, error) {
 	cfg, err := config.LoadConfig()
 	if err != nil {
 		return "", err
 	}
 
-	prompt := fmt.Sprintf(`You are a code security reviewer.
-Identify potential security vulnerabilities or risky patterns in this code, and provide a short explanation along with a severity level:
-
-%s
-`, code)
-
-	reqBody := HFRequest{
-		Inputs: prompt,
+	// Build our request payload
+	payload := ChatCompletionRequest{
+		Model: "meta-llama/Llama-3.3-70B-Instruct",
+		Messages: []ChatMessage{
+			{
+				Role:    "user",
+				Content: "What is the capital of France?",
+			},
+		},
+		MaxTokens: 500,
+		Stream:    false,
 	}
-	jsonData, err := json.Marshal(reqBody)
+
+	// Convert to JSON
+	data, err := json.Marshal(payload)
 	if err != nil {
 		return "", err
 	}
 
-	req, err := http.NewRequest("POST", cfg.HuggingFaceURL, bytes.NewBuffer(jsonData))
+	// Create HTTP POST request
+	req, err := http.NewRequest("POST",
+		"https://api-inference.huggingface.co/models/meta-llama/Llama-3.3-70B-Instruct/v1/chat/completions",
+		bytes.NewBuffer(data))
 	if err != nil {
 		return "", err
 	}
 
+	// Set required headers
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+cfg.HuggingFaceToken)
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", cfg.HuggingFaceToken))
 
+	// Send request
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -53,51 +88,28 @@ Identify potential security vulnerabilities or risky patterns in this code, and 
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != 200 {
+	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("hugging Face API error. Status: %d, Body: %s", resp.StatusCode, string(bodyBytes))
+		return "", fmt.Errorf("hugging face API error. Status: %d, Body: %s",
+			resp.StatusCode, string(bodyBytes))
 	}
 
+	// Read response body
 	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return "", err
 	}
 
-	var hfResponses []models.HFResponse
-	if err := json.Unmarshal(bodyBytes, &hfResponses); err != nil {
-		// If not an array, try single object
-		var singleResponse models.HFResponse
-		if err := json.Unmarshal(bodyBytes, &singleResponse); err != nil {
-			// Return raw text as fallback
-			return string(bodyBytes), nil
-		}
-		return singleResponse.GeneratedText, nil
-	}
-
-	if len(hfResponses) > 0 {
-		return hfResponses[0].GeneratedText, nil
-	}
-
-	return "", errors.New("no response from Hugging Face model")
-}
-
-func Analyze(filePath string) (string, error) {
-	content, err := os.ReadFile(filePath)
-	if err != nil {
+	// Parse JSON into our ChatCompletionResponse struct
+	var chatResp ChatCompletionResponse
+	if err := json.Unmarshal(bodyBytes, &chatResp); err != nil {
 		return "", err
 	}
 
-	codeSnippet := string(content)
-	if len(codeSnippet) > 3000 {
-		codeSnippet = codeSnippet[:3000] // Simple truncation
+	// Return first message from the assistant, if available
+	if len(chatResp.Choices) > 0 {
+		return strings.TrimSpace(chatResp.Choices[0].Message.Content), nil
 	}
 
-	analysis, err := AnalyzeCodeWithHF(codeSnippet)
-	if err != nil {
-		return "", err
-	}
-
-	// Clean up analysis text
-	analysis = strings.TrimSpace(analysis)
-	return analysis, nil
+	return "", nil
 }
