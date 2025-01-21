@@ -3,27 +3,54 @@ package config
 import (
 	"errors"
 	"os"
+
+	"github.com/joho/godotenv"
 )
 
+// Config holds the configuration values.
 type Config struct {
-	HuggingFaceToken string
 	HuggingFaceURL   string
+	HuggingFaceToken string
 }
 
-// Will switch to ChatGPT/Claude soon probably
+// LoadConfig reads configuration from a .env file and environment variables.
 func LoadConfig() (*Config, error) {
-	token := os.Getenv("HF_API_TOKEN")
-	if token == "" {
-		return nil, errors.New("HF_API_TOKEN environment variable not set")
+	// Load variables from .env file, if it exists.
+	// Ignore the error if the .env file is not present.
+	_ = godotenv.Load()
+
+	// Fetch required environment variables.
+	hfURL := os.Getenv("HUGGING_FACE_URL")
+	hfToken := os.Getenv("HUGGING_FACE_TOKEN")
+
+	// Validate that required variables are set.
+	var missing []string
+	if hfURL == "" {
+		missing = append(missing, "HUGGING_FACE_URL")
+	}
+	if hfToken == "" {
+		missing = append(missing, "HUGGING_FACE_TOKEN")
+	}
+	if len(missing) > 0 {
+		return nil, errors.New("missing required environment variables: " + joinStrings(missing, ", "))
 	}
 
-	url := os.Getenv("HF_API_URL")
-	if url == "" {
-		return nil, errors.New("HF_API_URL environment variable not set")
+	// Initialize and return the Config struct.
+	cfg := &Config{
+		HuggingFaceURL:   hfURL,
+		HuggingFaceToken: hfToken,
 	}
+	return cfg, nil
+}
 
-	return &Config{
-		HuggingFaceToken: token,
-		HuggingFaceURL:   url,
-	}, nil
+// joinStrings joins a slice of strings with a given separator.
+func joinStrings(items []string, sep string) string {
+	result := ""
+	for i, item := range items {
+		if i > 0 {
+			result += sep
+		}
+		result += item
+	}
+	return result
 }
